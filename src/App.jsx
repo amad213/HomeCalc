@@ -3,6 +3,7 @@ import Header from './Components/Header.jsx'
 import Footer from './Components/Footer.jsx'
 import Hero from './Calculators/Hero.jsx'
 import BrickCalculator from './Calculators/BrickCalculator.jsx'
+ 
 
 function App() {
   return (
@@ -17,6 +18,7 @@ function App() {
       </div>
       {/* Footer (Sticky Bottom) */}
       <Footer />
+       
     </div>
   )
 }

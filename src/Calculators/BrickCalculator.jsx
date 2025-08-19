@@ -24,7 +24,7 @@ export default function BrickCalculatorUniversal() {
   const sectionClass = "mb-6 p-6 bg-white/90 backdrop-blur-md rounded-2xl shadow-xl";
 
   return (
-    <div className="min-h-screen w-full bg-gradient-to-r from-yellow-400 via-orange-400 to-red-500 flex justify-center items-start py-10 px-4">
+    <div className=" w-full bg-gradient-to-r from-yellow-400 via-orange-400 to-red-500 flex justify-center items-start  py-10 px-4">
       <div className="max-w-3xl w-full">
         <h1 className="text-4xl font-bold text-center mb-10 text-white drop-shadow-lg">
           Universal Brick Calculator

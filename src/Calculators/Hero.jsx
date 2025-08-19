@@ -1,6 +1,6 @@
 export default function Hero() {
   return (
-    <section className="relative bg-gradient-to-r from-yellow-400 via-orange-400 to-red-500 border-b-4 border-black border-solid text-white py-20 h-[590px] flex flex-col justify-center items-center">
+    <section className="relative bg-gradient-to-r from-yellow-400 via-orange-400 to-red-500 border-b-4 border-black border-solid text-white py-20  flex flex-col justify-center items-center">
       <div className="max-w-7xl mx-auto px-6 text-center">
         
         {/* Headline */}
