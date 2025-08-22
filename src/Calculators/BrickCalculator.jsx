@@ -1,22 +1,32 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect } from "react";
+import * as XLSX from "xlsx";
 
+// -------------------- Constants --------------------
+const UNIT_FACTORS_TO_M = {
+  m: 1,
+  cm: 0.01,
+  mm: 0.001,
+  in: 0.0254,
+  ft: 0.3048,
+};
+
+// default preset bricks (kept from your original)
+const PRESETS = {
+  imperial: { label: "Imperial 9×4.5×3 in", l: 9, w: 4.5, h: 3, unit: "in" },
+  modular: { label: "Modular 190×90×90 mm", l: 190, w: 90, h: 90, unit: "mm" },
+};
+
+// -------------------- Component --------------------
 const Calculator = () => {
-  const UNIT_FACTORS_TO_M = {
-    m: 1,
-    cm: 0.01,
-    mm: 0.001,
-    in: 0.0254,
-    ft: 0.3048,
-  };
+  // ---------- State (kept your original shape) ----------
+  const [walls, setWalls] = useState(() => {
+    try {
+      const saved = localStorage.getItem("brick_calc_walls_v1");
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return [{ id: 1, length: 62, lengthUnit: "ft", height: 12, heightUnit: "ft", thicknessFt: 0.75 }];
+  });
 
-  const PRESETS = {
-    imperial: { label: "Imperial 9×4.5×3 in", l: 9, w: 4.5, h: 3, unit: "in" },
-    modular: { label: "Modular 190×90×90 mm", l: 190, w: 90, h: 90, unit: "mm" },
-  };
-
-  const [walls, setWalls] = useState([
-    { id: 1, length: 62, lengthUnit: "ft", height: 12, heightUnit: "ft", thicknessFt: 0.75 }
-  ]);
   const [brickPreset, setBrickPreset] = useState("imperial");
   const [brickUnit, setBrickUnit] = useState("in");
   const [brickL, setBrickL] = useState(9);
@@ -32,44 +42,29 @@ const Calculator = () => {
   const [mortarPerThousandCFT, setMortarPerThousandCFT] = useState(13.5);
   const [useThumbMortarRule, setUseThumbMortarRule] = useState(true);
 
-  // Utility functions
+  // persist walls -> localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem("brick_calc_walls_v1", JSON.stringify(walls));
+    } catch {}
+  }, [walls]);
+
+  // ---------- Utilities ----------
   const toMeters = (value, unit) => {
     return (Number(value) || 0) * (UNIT_FACTORS_TO_M[unit] ?? 1);
   };
 
-  const formatNumber = (n) => {
-    return n === null || n === undefined ? "—" : Number(n).toLocaleString();
-  };
+  const formatNumber = (n) => (n === null || n === undefined ? "—" : Number(n).toLocaleString());
+  const formatCurrency = (n) =>
+    n === null || n === undefined || Number.isNaN(Number(n)) ? "—" : "$" + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-  const formatCurrency = (n) => {
-    return n === null || n === undefined ? "—" : "$" + Number(n).toLocaleString(undefined, { 
-      minimumFractionDigits: 2, 
-      maximumFractionDigits: 2 
-    });
-  };
-
-  // Wall management
+  // ---------- Wall helpers ----------
   const addWall = () => {
-    const newWall = {
-      id: Date.now(),
-      length: 10,
-      lengthUnit: "ft",
-      height: 8,
-      heightUnit: "ft",
-      thicknessFt: 0.75
-    };
-    setWalls([...walls, newWall]);
+    const newWall = { id: Date.now(), length: 10, lengthUnit: "ft", height: 8, heightUnit: "ft", thicknessFt: 0.75 };
+    setWalls((s) => [...s, newWall]);
   };
-
-  const removeWall = (id) => {
-    if (walls.length > 1) {
-      setWalls(walls.filter(w => w.id !== id));
-    }
-  };
-
-  const updateWall = (id, patch) => {
-    setWalls(walls.map(w => w.id === id ? { ...w, ...patch } : w));
-  };
+  const removeWall = (id) => setWalls((s) => (s.length > 1 ? s.filter((w) => w.id !== id) : s));
+  const updateWall = (id, patch) => setWalls((s) => s.map((w) => (w.id === id ? { ...w, ...patch } : w)));
 
   const applyPreset = (key) => {
     if (PRESETS[key]) {
@@ -87,7 +82,7 @@ const Calculator = () => {
   };
 
   const resetAll = () => {
-    setWalls([{ id: Date.now(), length: 62, lengthUnit: "ft", height: 12, heightUnit: "ft", thicknessFt: 0.75 }]);
+    resetToExample();
     setBrickPreset("imperial");
     setBrickUnit("in");
     setBrickL(9);
@@ -102,48 +97,20 @@ const Calculator = () => {
     setLaborPerThousand("");
     setMortarPerThousandCFT(13.5);
     setUseThumbMortarRule(true);
+    try {
+      localStorage.removeItem("brick_calc_walls_v1");
+    } catch {}
   };
 
-  // CSV Export
-  const exportCSV = () => {
-    const results = calculateResults();
-    const headers = [
-      "Method",
-      "Bricks (incl waste)",
-      "Wall area m2",
-      "Wall volume m3",
-      "Brick module L (m)",
-      "Brick module W (m)",
-      "Brick module H (m)",
-      "Mortar cft (thumb rule)",
-    ];
-    const row = [
-      "Area",
-      results.totals.areaCount,
-      results.totalsDetailed.totalArea_m2.toFixed(3),
-      results.totalsDetailed.totalVolume_m3.toFixed(3),
-      results.totalsDetailed.moduleDims.moduleL_m.toFixed(4),
-      results.totalsDetailed.moduleDims.moduleW_m.toFixed(4),
-      results.totalsDetailed.moduleDims.moduleH_m.toFixed(4),
-      results.mortar.mortarCFT !== null ? results.mortar.mortarCFT.toFixed(3) : "",
-    ];
-    const csv = [headers.join(","), row.join(",")].join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "brick_estimate.csv";
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  // Calculation
+  // ---------- Main calculation ----------
   const calculateResults = () => {
+    // brick dims in meters
     const brickL_m = toMeters(brickL, brickUnit);
     const brickW_m = toMeters(brickW, brickUnit);
     const brickH_m = toMeters(brickH, brickUnit);
     const joint_m = toMeters(jointIn, jointUnit);
 
+    // module dims include mortar if selected
     const moduleL_m = brickL_m + (includeMortar ? joint_m : 0);
     const moduleH_m = brickH_m + (includeMortar ? joint_m : 0);
     const moduleW_m = brickW_m + (includeMortar ? joint_m : 0);
@@ -158,54 +125,64 @@ const Calculator = () => {
     let totalVolume_m3 = 0;
 
     for (const w of walls) {
+      // validate inputs for each wall
       const Lm = toMeters(w.length, w.lengthUnit);
       const Hm = toMeters(w.height, w.heightUnit);
-      const thickness_m = w.thicknessFt * UNIT_FACTORS_TO_M["ft"];
+      const thickness_m = Number(w.thicknessFt) ? Number(w.thicknessFt) * UNIT_FACTORS_TO_M["ft"] : 0;
       const area_m2 = Lm * Hm;
       const volume_m3 = area_m2 * thickness_m;
 
+      // accumulate totals
       totalArea_m2 += area_m2;
       totalVolume_m3 += volume_m3;
 
+      // area method: number of bricks on wall face times thickness / module width
       const brickFace_m2 = moduleL_m * moduleH_m;
-      const bricks_area = brickFace_m2 > 0 ? (area_m2 / brickFace_m2) : 0;
-      totalBricksAreaMethod += bricks_area * (thickness_m / moduleW_m);
+      const bricks_area = brickFace_m2 > 0 ? area_m2 / brickFace_m2 : 0;
+      totalBricksAreaMethod += bricks_area * (thickness_m > 0 && moduleW_m > 0 ? (thickness_m / moduleW_m) : 0);
 
-      const bricks_volume = moduleBrickVol_m3 > 0 ? (volume_m3 / moduleBrickVol_m3) : 0;
+      // volume method: wall volume / brick module volume
+      const bricks_volume = moduleBrickVol_m3 > 0 ? volume_m3 / moduleBrickVol_m3 : 0;
       totalBricksVolumeMethod += bricks_volume;
 
+      // thumb rule: use cft thumb constant per thousand bricks
       const wallVol_cft = volume_m3 / 0.0283168466;
-      const bricks_thumb = wallVol_cft > 0 ? (wallVol_cft / mortarPerThousandCFT) * 1000 : 0;
+      const bricks_thumb = mortarPerThousandCFT > 0 ? (wallVol_cft / mortarPerThousandCFT) * 1000 : 0;
       totalBricksThumbMethod += bricks_thumb;
     }
 
     const addWaste = (n) => Math.ceil(n * (1 + (Number(wastePct || 0) / 100)));
-    const areaCount = addWaste(totalBricksAreaMethod);
-    const volumeCount = addWaste(totalBricksVolumeMethod);
-    const thumbCount = addWaste(totalBricksThumbMethod);
+
+    const areaCount = addWaste(totalBricksAreaMethod || 0);
+    const volumeCount = addWaste(totalBricksVolumeMethod || 0);
+    const thumbCount = addWaste(totalBricksThumbMethod || 0);
 
     const bricksUsed = method === "area" ? areaCount : method === "thumb" ? thumbCount : volumeCount;
+
+    // costs
     const costBricks = pricePerBrick ? bricksUsed * Number(pricePerBrick) : null;
     const laborCost = laborPerThousand ? (bricksUsed / 1000) * Number(laborPerThousand) : null;
     const totalCost = (costBricks ?? 0) + (laborCost ?? 0);
 
+    // mortar (thumb rule)
     const mortarCFT = useThumbMortarRule ? (bricksUsed / 1000) * Number(mortarPerThousandCFT) : null;
     const mortarM3 = mortarCFT !== null ? mortarCFT * 0.0283168466 : null;
 
     return {
       totals: { areaCount, volumeCount, thumbCount, bricksUsed },
-      totalsDetailed: { 
-        totalArea_m2, 
-        totalVolume_m3, 
-        solidBrickVol_m3, 
-        moduleBrickVol_m3, 
-        moduleDims: { moduleL_m, moduleW_m, moduleH_m } 
+      totalsDetailed: {
+        totalArea_m2,
+        totalVolume_m3,
+        solidBrickVol_m3,
+        moduleBrickVol_m3,
+        moduleDims: { moduleL_m, moduleW_m, moduleH_m },
       },
       costs: { costBricks, laborCost, totalCost },
-      mortar: { mortarCFT, mortarM3 }
+      mortar: { mortarCFT, mortarM3 },
     };
   };
 
+  // memoize results for UI performance
   const results = useMemo(calculateResults, [
     walls,
     brickL,
@@ -223,20 +200,113 @@ const Calculator = () => {
     useThumbMortarRule,
   ]);
 
+  // ---------- Export functions ----------
+  const exportCSV = () => {
+    try {
+      const r = calculateResults();
+      const headers = [
+        "Method",
+        "Bricks (incl waste)",
+        "Wall area m2",
+        "Wall volume m3",
+        "Brick module L (m)",
+        "Brick module W (m)",
+        "Brick module H (m)",
+        "Mortar cft (thumb rule)",
+      ];
+      const row = [
+        method,
+        r.totals.bricksUsed,
+        r.totalsDetailed.totalArea_m2.toFixed(3),
+        r.totalsDetailed.totalVolume_m3.toFixed(3),
+        r.totalsDetailed.moduleDims.moduleL_m.toFixed(4),
+        r.totalsDetailed.moduleDims.moduleW_m.toFixed(4),
+        r.totalsDetailed.moduleDims.moduleH_m.toFixed(4),
+        r.mortar.mortarCFT !== null ? r.mortar.mortarCFT.toFixed(3) : "",
+      ];
+      const csv = [headers.join(","), row.join(",")].join("\n");
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "brick_estimate.csv";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error(err);
+      alert("CSV export failed.");
+    }
+  };
+
+  const exportExcel = () => {
+    try {
+      const r = calculateResults();
+      const data = [
+        {
+          Method: method,
+          "Bricks (incl waste)": r.totals.bricksUsed,
+          "Wall area m2": r.totalsDetailed.totalArea_m2.toFixed(3),
+          "Wall volume m3": r.totalsDetailed.totalVolume_m3.toFixed(3),
+          "Brick L (m)": r.totalsDetailed.moduleDims.moduleL_m.toFixed(4),
+          "Brick W (m)": r.totalsDetailed.moduleDims.moduleW_m.toFixed(4),
+          "Brick H (m)": r.totalsDetailed.moduleDims.moduleH_m.toFixed(4),
+          "Mortar cft": r.mortar.mortarCFT !== null ? r.mortar.mortarCFT.toFixed(3) : "",
+          "Total cost": r.costs.totalCost ? r.costs.totalCost.toFixed(2) : "",
+        },
+      ];
+      const ws = XLSX.utils.json_to_sheet(data);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Brick Estimate");
+      XLSX.writeFile(wb, "brick_estimate.xlsx");
+    } catch (err) {
+      console.error(err);
+      alert("Excel export failed. Make sure xlsx is installed.");
+    }
+  };
+
+  // dynamic PDF import so build doesn't fail if jspdf not installed
+  const exportPDF = async () => {
+    try {
+      const jsPDFModule = await import("jspdf");
+      await import("jspdf-autotable");
+      const { default: jsPDF } = jsPDFModule;
+      const r = calculateResults();
+
+      const doc = new jsPDF();
+      doc.setFontSize(16);
+      doc.text("Brick Calculation Report", 14, 20);
+      doc.autoTable({
+        startY: 30,
+        head: [["Parameter", "Value"]],
+        body: [
+          ["Method", method],
+          ["Bricks (incl. waste)", r.totals.bricksUsed],
+          ["Wall area (m²)", r.totalsDetailed.totalArea_m2.toFixed(3)],
+          ["Wall volume (m³)", r.totalsDetailed.totalVolume_m3.toFixed(3)],
+          ["Mortar (cft)", r.mortar.mortarCFT !== null ? r.mortar.mortarCFT.toFixed(3) : "-"],
+          ["Total cost", r.costs.totalCost ? formatCurrency(r.costs.totalCost) : "-"],
+        ],
+      });
+      doc.save("brick_estimate.pdf");
+    } catch (err) {
+      console.error(err);
+      alert("PDF export requires jspdf and jspdf-autotable. Install with:\n\nnpm install jspdf jspdf-autotable");
+    }
+  };
+
+  // ---------- UI (kept your exact layout, small validation) ----------
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 p-4 md:p-6">
       {/* Header */}
       <div className="max-w-6xl mx-auto mb-8 text-center">
         <div className="bg-gradient-to-r from-blue-600 to-purple-600 rounded-2xl p-8 mb-6 shadow-2xl">
-          <h1 className="text-4xl md:text-5xl font-bold text-white mb-4">
-            🧱 Universal Brick Calculator
-          </h1>
+          <h1 className="text-4xl md:text-5xl font-bold text-white mb-4">🧱 Universal Brick Calculator</h1>
           <p className="text-blue-100 text-lg md:text-xl max-w-3xl mx-auto">
             Professional construction calculator for accurate brick estimation, cost analysis, and project planning
           </p>
         </div>
-        
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 mb-8">
           <div className="bg-white rounded-xl p-4 shadow-lg border-l-4 border-blue-500">
             <div className="text-2xl font-bold text-blue-600">3 Methods</div>
             <div className="text-gray-600">Volume, Area & Thumb Rule</div>
@@ -246,8 +316,8 @@ const Calculator = () => {
             <div className="text-gray-600">Materials & Labor</div>
           </div>
           <div className="bg-white rounded-xl p-4 shadow-lg border-l-4 border-yellow-500">
-            <div className="text-2xl font-bold text-yellow-600">CSV Export</div>
-            <div className="text-gray-600">Professional Reports</div>
+            <div className="text-2xl font-bold text-yellow-600">Reports</div>
+            <div className="text-gray-600">CSV · Excel · PDF</div>
           </div>
         </div>
       </div>
@@ -264,21 +334,21 @@ const Calculator = () => {
               </h2>
               <span className="text-sm text-gray-500">Multiple walls supported</span>
             </div>
-            
+
             <div>
               {walls.map((w, i) => (
                 <div key={w.id} className="border border-gray-200 rounded-xl p-4 mb-3 bg-gray-50">
                   <div className="flex justify-between items-center mb-3">
                     <div className="font-medium text-gray-700">Wall #{i + 1}</div>
                     <div className="flex gap-2">
-                      <button 
+                      <button
                         onClick={() => updateWall(w.id, { length: 0, height: 0 })}
                         className="text-xs px-3 py-1 border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-200"
                       >
                         Reset
                       </button>
                       {walls.length > 1 && (
-                        <button 
+                        <button
                           onClick={() => removeWall(w.id)}
                           className="text-xs px-3 py-1 bg-red-100 text-red-700 rounded-lg hover:bg-red-200"
                         >
@@ -295,7 +365,7 @@ const Calculator = () => {
                         <input
                           type="number"
                           value={w.length}
-                          onChange={(e) => updateWall(w.id, { length: e.target.value })}
+                          onChange={(e) => updateWall(w.id, { length: Number(e.target.value) })}
                           className="flex-1 border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                         />
                         <select
@@ -317,7 +387,7 @@ const Calculator = () => {
                         <input
                           type="number"
                           value={w.height}
-                          onChange={(e) => updateWall(w.id, { height: e.target.value })}
+                          onChange={(e) => updateWall(w.id, { height: Number(e.target.value) })}
                           className="flex-1 border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                         />
                         <select
@@ -339,7 +409,7 @@ const Calculator = () => {
                         type="number"
                         step="0.01"
                         value={w.thicknessFt}
-                        onChange={(e) => updateWall(w.id, { thicknessFt: e.target.value })}
+                        onChange={(e) => updateWall(w.id, { thicknessFt: Number(e.target.value) })}
                         className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       />
                       <div className="text-xs text-gray-500 mt-1">Examples: 0.375 (4.5 in), 0.75 (9 in), 1.125 (13.5 in)</div>
@@ -350,13 +420,13 @@ const Calculator = () => {
             </div>
 
             <div className="flex gap-3 mt-4">
-              <button 
+              <button
                 onClick={addWall}
                 className="px-4 py-2 bg-blue-500 text-white rounded-lg shadow-md hover:bg-blue-600 transition-colors flex items-center"
               >
                 <span className="text-lg mr-2">+</span> Add Wall
               </button>
-              <button 
+              <button
                 onClick={resetToExample}
                 className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
               >
@@ -377,7 +447,7 @@ const Calculator = () => {
             <div className="grid grid-cols-2 gap-4 mb-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Preset</label>
-                <select 
+                <select
                   value={brickPreset}
                   onChange={(e) => applyPreset(e.target.value)}
                   className="w-full border border-gray-300 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -389,7 +459,7 @@ const Calculator = () => {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Units</label>
-                <select 
+                <select
                   value={brickUnit}
                   onChange={(e) => setBrickUnit(e.target.value)}
                   className="w-full border border-gray-300 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -405,7 +475,7 @@ const Calculator = () => {
             <div className="grid grid-cols-3 gap-4 mb-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Length</label>
-                <input 
+                <input
                   type="number"
                   value={brickL}
                   onChange={(e) => setBrickL(Number(e.target.value))}
@@ -414,7 +484,7 @@ const Calculator = () => {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Width</label>
-                <input 
+                <input
                   type="number"
                   value={brickW}
                   onChange={(e) => setBrickW(Number(e.target.value))}
@@ -423,7 +493,7 @@ const Calculator = () => {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Height</label>
-                <input 
+                <input
                   type="number"
                   value={brickH}
                   onChange={(e) => setBrickH(Number(e.target.value))}
@@ -435,7 +505,7 @@ const Calculator = () => {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="flex items-center space-x-2">
-                  <input 
+                  <input
                     type="checkbox"
                     checked={includeMortar}
                     onChange={() => setIncludeMortar(!includeMortar)}
@@ -447,13 +517,13 @@ const Calculator = () => {
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Joint thickness</label>
                 <div className="flex gap-2">
-                  <input 
+                  <input
                     type="number"
                     value={jointIn}
                     onChange={(e) => setJointIn(Number(e.target.value))}
                     className="flex-1 border border-gray-300 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   />
-                  <select 
+                  <select
                     value={jointUnit}
                     onChange={(e) => setJointUnit(e.target.value)}
                     className="border border-gray-300 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:border-transparent w-20"
@@ -480,7 +550,7 @@ const Calculator = () => {
             <div className="grid grid-cols-2 gap-4 mb-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Calculation Method</label>
-                <select 
+                <select
                   value={method}
                   onChange={(e) => setMethod(e.target.value)}
                   className="w-full border border-gray-300 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -492,7 +562,7 @@ const Calculator = () => {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Waste Percentage</label>
-                <input 
+                <input
                   type="number"
                   value={wastePct}
                   onChange={(e) => setWastePct(Number(e.target.value))}
@@ -504,7 +574,7 @@ const Calculator = () => {
             <div className="grid grid-cols-2 gap-4 mb-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Price per Brick ($)</label>
-                <input 
+                <input
                   type="number"
                   value={pricePerBrick}
                   onChange={(e) => setPricePerBrick(e.target.value)}
@@ -513,7 +583,7 @@ const Calculator = () => {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Labor per 1000 ($)</label>
-                <input 
+                <input
                   type="number"
                   value={laborPerThousand}
                   onChange={(e) => setLaborPerThousand(e.target.value)}
@@ -524,7 +594,7 @@ const Calculator = () => {
 
             <div className="mb-4">
               <label className="flex items-center space-x-2 mb-2">
-                <input 
+                <input
                   type="checkbox"
                   checked={useThumbMortarRule}
                   onChange={() => setUseThumbMortarRule(!useThumbMortarRule)}
@@ -533,7 +603,7 @@ const Calculator = () => {
                 <span className="text-sm font-medium text-gray-700">Use mortar thumb rule</span>
               </label>
               <div className="flex items-center gap-2">
-                <input 
+                <input
                   type="number"
                   value={mortarPerThousandCFT}
                   onChange={(e) => setMortarPerThousandCFT(Number(e.target.value))}
@@ -543,17 +613,17 @@ const Calculator = () => {
               </div>
             </div>
 
-            <div className="flex gap-3">
-              <button 
-                onClick={exportCSV}
-                className="px-4 py-2 bg-green-500 text-white rounded-lg shadow-md hover:bg-green-600 transition-colors flex-1"
-              >
+            <div className="flex flex-wrap gap-3">
+              <button onClick={exportCSV} className="px-4 py-2 bg-green-500 text-white rounded-lg shadow-md hover:bg-green-600 transition-colors flex-1">
                 📊 Export CSV
               </button>
-              <button 
-                onClick={resetAll}
-                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-              >
+              <button onClick={exportExcel} className="px-4 py-2 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 transition-colors flex-1">
+                📑 Export Excel
+              </button>
+              <button onClick={exportPDF} className="px-4 py-2 bg-red-500 text-white rounded-lg shadow-md hover:bg-red-600 transition-colors flex-1">
+                📄 Export PDF
+              </button>
+              <button onClick={resetAll} className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
                 🔄 Reset All
               </button>
             </div>
@@ -576,9 +646,7 @@ const Calculator = () => {
                 <div className="text-gray-600">Total wall volume:</div>
                 <div className="font-semibold text-right">{results.totalsDetailed.totalVolume_m3.toFixed(3)} m³</div>
                 <div className="text-gray-600">Brick module volume:</div>
-                <div className="font-semibold text-right">
-                  {results.totalsDetailed.moduleBrickVol_m3 ? results.totalsDetailed.moduleBrickVol_m3.toExponential(4) : "—"} m³
-                </div>
+                <div className="font-semibold text-right">{results.totalsDetailed.moduleBrickVol_m3 ? results.totalsDetailed.moduleBrickVol_m3.toExponential(4) : "—"} m³</div>
               </div>
 
               <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-4 rounded-xl border border-blue-200">
@@ -602,9 +670,7 @@ const Calculator = () => {
               <div className="bg-gradient-to-r from-green-50 to-emerald-50 p-4 rounded-xl border border-green-200">
                 <div className="flex justify-between items-center mb-2">
                   <h3 className="font-semibold text-green-800">Selected Method</h3>
-                  <span className="text-sm bg-green-200 text-green-800 px-2 py-1 rounded-full capitalize">
-                    {method}
-                  </span>
+                  <span className="text-sm bg-green-200 text-green-800 px-2 py-1 rounded-full capitalize">{method}</span>
                 </div>
                 <div className="text-center py-3">
                   <div className="text-3xl font-bold text-green-700">{formatNumber(results.totals.bricksUsed)}</div>
@@ -647,22 +713,10 @@ const Calculator = () => {
           <div className="bg-white rounded-2xl shadow-xl p-6 transition-all duration-300 hover:shadow-2xl">
             <h3 className="text-lg font-semibold text-gray-800 mb-3">💡 Professional Tips</h3>
             <div className="space-y-2 text-sm text-gray-600">
-              <div className="flex items-start">
-                <span className="w-2 h-2 bg-blue-500 rounded-full mt-2 mr-3"></span>
-                <span><strong>Volume method</strong> is most accurate for ordering (considers wall thickness)</span>
-              </div>
-              <div className="flex items-start">
-                <span className="w-2 h-2 bg-blue-500 rounded-full mt-2 mr-3"></span>
-                <span><strong>Area method</strong> works best for single-wythe walls (approximation)</span>
-              </div>
-              <div className="flex items-start">
-                <span className="w-2 h-2 bg-blue-500 rounded-full mt-2 mr-3"></span>
-                <span><strong>Thumb rule</strong> (13.5 cft = 1000 bricks) is for quick field estimates</span>
-              </div>
-              <div className="flex items-start">
-                <span className="w-2 h-2 bg-blue-500 rounded-full mt-2 mr-3"></span>
-                <span>Typical waste percentage: <strong>5-15%</strong> for cutting and breakage</span>
-              </div>
+              <div className="flex items-start"><span className="w-2 h-2 bg-blue-500 rounded-full mt-2 mr-3"></span><span><strong>Volume method</strong> is most accurate for ordering (considers wall thickness)</span></div>
+              <div className="flex items-start"><span className="w-2 h-2 bg-blue-500 rounded-full mt-2 mr-3"></span><span><strong>Area method</strong> works best for single-wythe walls (approximation)</span></div>
+              <div className="flex items-start"><span className="w-2 h-2 bg-blue-500 rounded-full mt-2 mr-3"></span><span><strong>Thumb rule</strong> (13.5 cft = 1000 bricks) is for quick field estimates</span></div>
+              <div className="flex items-start"><span className="w-2 h-2 bg-blue-500 rounded-full mt-2 mr-3"></span><span>Typical waste percentage: <strong>5-15%</strong> for cutting and breakage</span></div>
             </div>
           </div>
 
@@ -684,9 +738,9 @@ const Calculator = () => {
             </div>
           </div>
         </div>
-      </div>
+      </div> {/* end main grid */}
     </div>
   );
 };
 
-export default Calculator;  
+export default Calculator;
